@@ -1,11 +1,13 @@
 [package]
-name = "Py03_Example"
+name = "py03_example"
 version = "0.1.0"
-edition = "2018"
+edition = "2021"
 
 [dependencies]
 pyo3 = { version = "0.18", features = ["extension-module"] }
+minifb = "0.27"
 rayon = "1.5"
+rand = "0.8"
 
 [lib]
 crate-type = ["cdylib"]

@@ -2,10 +2,10 @@ use minifb::{Key, Window, WindowOptions};
 use rayon::prelude::*;
 use std::time::Instant;
 use rand::Rng;
-const WIDTH: usize = 800;
-const HEIGHT: usize = 800;
-const GWIDTH: usize = 800;
-const GHEIGHT: usize = 800;
+const WIDTH: usize = 900;
+const HEIGHT: usize = 900;
+const GWIDTH: usize = 900;
+const GHEIGHT: usize = 900;
 
 fn create_grids(rz: usize, cz: usize) -> Vec<Vec<u8>> {
     let mut grid = vec![vec![0; cz]; rz];

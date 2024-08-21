@@ -15,7 +15,7 @@ pygame.init()
 
 clock = Clock()
 # Example usage
-rz, cz = 900, 700
+rz, cz = 900, 900
 ww, wh = rz, cz
 
 

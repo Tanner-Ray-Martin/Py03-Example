@@ -1,56 +1,135 @@
 use pyo3::prelude::*;
-use pyo3::wrap_pyfunction;
-use rayon::prelude::*; // For parallelism
+use rayon::prelude::*;
+use rand::Rng;
 
-#[pyfunction]
-fn get_grids(grid: Vec<usize>, _cg: Vec<u8>, rz: usize, cz: usize) -> (Vec<usize>, Vec<u8>) {
-    // Use parallel iterator to calculate new grid and color grid values
-    let results: Vec<(usize, [u8; 3])> = (0..rz * cz)
-        .into_par_iter()
-        .map(|idx| {
-            let r = idx / cz;
-            let c = idx % cz;
-            let v = grid[idx];
-            let mut red = 0;
-            let mut blue = 0;
+const GWIDTH: usize = 900;
+const GHEIGHT: usize = 900;
 
-            let r_min = if r > 0 { r - 1 } else { 0 };
-            let r_max = if r + 1 < rz { r + 2 } else { rz };
-            let c_min = if c > 0 { c - 1 } else { 0 };
-            let c_max = if c + 1 < cz { c + 2 } else { cz };
+fn create_grids(rz: usize, cz: usize) -> Vec<Vec<u8>> {
+    let mut grid = vec![vec![0; cz]; rz];
+    let mut rng = rand::thread_rng();
 
-            for i in r_min..r_max {
-                for j in c_min..c_max {
-                    let neighbor_idx = i * cz + j;
-                    red += grid[neighbor_idx];
-                    if (i == r_min || i == r_max - 1) && (j == c_min || j == c_max - 1) {
-                        blue += grid[neighbor_idx];
-                    }
-                }
+    for r in 0..rz {
+        for c in 0..cz {
+            grid[r][c] = rng.gen_range(0..=1);
+        }
+    }
+
+    grid
+}
+
+fn get_neighbors(grid: &Vec<Vec<u8>>, r: usize, c: usize, rz: usize, cz: usize) -> (u8, u8) {
+    let mut count = 0;
+    let v = grid[r][c];
+
+    let r_min = r.saturating_sub(1);
+    let r_max = (r + 2).min(rz);
+    let c_min = c.saturating_sub(1);
+    let c_max = (c + 2).min(cz);
+
+    for i in r_min..r_max {
+        for j in c_min..c_max {
+            if i != r || j != c {
+                count += grid[i][j];
             }
-            let green = red - blue;
+        }
+    }
 
-            let new_v = if v == 0 && (red - v) == 3 {
-                1
-            } else if v == 1 && ((red - v) < 2 || (red - v) > 3) {
-                0
-            } else {
-                v
-            };
+    (count, v)
+}
 
-            (new_v, [(red * 28 * v) as u8, (green * 63) as u8, (blue * 63) as u8])
+fn get_new_value(v: u8, ln: u8) -> u8 {
+    if v == 0 && ln == 3 {
+        1
+    } else if v == 1 && (ln < 2 || ln > 3) {
+        0
+    } else {
+        v
+    }
+}
+
+fn get_grids(grid: &Vec<Vec<u8>>, rz: usize, cz: usize) -> Vec<Vec<u8>> {
+    let new_grid: Vec<Vec<u8>> = (0..rz)
+        .into_par_iter()
+        .map(|r| {
+            let mut row = vec![0; cz];
+            for c in 0..cz {
+                let (ln, v) = get_neighbors(grid, r, c, rz, cz);
+                let new_v = get_new_value(v, ln);
+                row[c] = new_v;
+            }
+            row
         })
         .collect();
 
-    // Split the results into separate grid and color grid vectors
-    let new_grid: Vec<usize> = results.iter().map(|(new_v, _)| *new_v).collect();
-    let new_cg: Vec<u8> = results.iter().flat_map(|(_, colors)| colors.iter().copied()).collect();
-
-    (new_grid, new_cg)
+    new_grid
 }
+
+fn update_color_grid(grid: &Vec<Vec<u8>>, cg: &mut Vec<Vec<[u8; 3]>>, rz: usize, cz: usize) {
+    for r in 0..rz {
+        for c in 0..cz {
+            if grid[r][c] == 1 {
+                cg[r][c] = [255, 255, 255]; // White color for live cells
+            } else {
+                cg[r][c] = [0, 0, 0]; // Black color for dead cells
+            }
+        }
+    }
+}
+
+#[pyclass]
+struct ColorGridGenerator {
+    grid: Vec<Vec<u8>>,
+    cg: Vec<Vec<[u8; 3]>>,
+}
+
+#[pymethods]
+impl ColorGridGenerator {
+    #[new]
+    fn new() -> Self {
+        let grid = create_grids(GWIDTH, GHEIGHT);
+        let cg = vec![vec![[0; 3]; GHEIGHT]; GWIDTH];
+        ColorGridGenerator { grid, cg }
+    }
+
+    fn __iter__(slf: PyRef<Self>) -> Py<ColorGridIterator> {
+        Py::new(slf.py(), ColorGridIterator {
+            grid: slf.grid.clone(),
+            cg: slf.cg.clone(),
+        }).unwrap()
+    }
+}
+
+#[pyclass]
+struct ColorGridIterator {
+    grid: Vec<Vec<u8>>,
+    cg: Vec<Vec<[u8; 3]>>,
+}
+
+#[pymethods]
+impl ColorGridIterator {
+    fn __iter__(slf: PyRef<Self>) -> PyRef<Self> {
+        slf
+    }
+
+    fn __next__(mut slf: PyRefMut<Self>) -> Option<Vec<Vec<[u8; 3]>>> {
+        let new_grid = get_grids(&slf.grid, GWIDTH, GHEIGHT);
+
+        // Borrow the color grid first, then update the grid
+        let mut cg = std::mem::take(&mut slf.cg);
+        update_color_grid(&new_grid, &mut cg, GWIDTH, GHEIGHT);
+        slf.grid = new_grid;
+        slf.cg = cg;
+
+        Some(slf.cg.clone())
+    }
+}
+
 #[pymodule]
-fn Py03_Example(_py: Python, m: &PyModule) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(get_grids, m)?)?;
+fn py03_example(_py: Python, m: &PyModule) -> PyResult<()> {
+    m.add_class::<ColorGridGenerator>()?;
+    m.add_class::<ColorGridIterator>()?;
     Ok(())
 }
+
 
